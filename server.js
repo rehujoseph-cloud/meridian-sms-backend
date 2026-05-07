@@ -6,30 +6,36 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// POST /send-sms
-// Body: { to, body, accountSid, authToken, from }
-app.post('/send-sms', async (req, res) => {
-  const { to, body, accountSid, authToken, from } = req.body;
+// ── ENV CONFIG ──
+const TWILIO_SID   = process.env.TWILIO_SID   || '';
+const TWILIO_TOKEN = process.env.TWILIO_TOKEN  || '';
+const TWILIO_FROM  = process.env.TWILIO_FROM   || '';
+const AGENT_PHONE  = process.env.AGENT_PHONE   || '';
 
-  if (!to || !body || !accountSid || !authToken || !from) {
-    return res.status(400).json({ error: 'Missing required fields: to, body, accountSid, authToken, from' });
-  }
+// ── HELPER: Send SMS ──
+async function sendSms(to, body, sid, token, from) {
+  const accountSid = sid   || TWILIO_SID;
+  const authToken  = token || TWILIO_TOKEN;
+  const fromNumber = from  || TWILIO_FROM;
+  if (!accountSid || !authToken || !fromNumber || !to) throw new Error('Missing Twilio credentials');
+  const client = twilio(accountSid, authToken);
+  const message = await client.messages.create({ to, from: fromNumber, body });
+  return message.sid;
+}
 
-  try {
-    const client = twilio(accountSid, authToken);
-    const message = await client.messages.create({ to, from, body });
-    console.log('[SMS sent]', message.sid, '→', to);
-    res.json({ success: true, sid: message.sid });
-  } catch (err) {
-    console.error('[SMS error]', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// ── HELPER: Format AU number ──
+function formatAU(num) {
+  if (!num) return null;
+  num = num.toString().replace(/\s/g, '');
+  if (num.startsWith('+')) return num;
+  if (num.startsWith('61')) return '+' + num;
+  if (num.startsWith('0')) return '+61' + num.slice(1);
+  return '+61' + num;
+}
 
-// Health check
-app.get('/', (req, res) => {
-  res.json({ status: 'Meridian SMS Backend running ✅' });
-});
-
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+// ── HELPER: Score a lead ──
+function scoreLead({ phone, email, intent, budget }) {
+  let score = 40;
+  if (phone) score += 20;
+  if (email) score += 10;
+  const highIntent
