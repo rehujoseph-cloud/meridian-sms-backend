@@ -1,26 +1,64 @@
 const express = require('express');
 const cors = require('cors');
-const twilio = require('twilio');
+const https = require('https');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const TWILIO_SID = process.env.TWILIO_SID || '';
-const TWILIO_TOKEN = process.env.TWILIO_TOKEN || '';
-const TWILIO_FROM = process.env.TWILIO_FROM || '';
+const VONAGE_API_KEY = process.env.VONAGE_API_KEY || '';
+const VONAGE_API_SECRET = process.env.VONAGE_API_SECRET || '';
 const AGENT_PHONE = process.env.AGENT_PHONE || '';
 
-async function sendSms(to, body, sid, token, from) {
-  var accountSid = sid || TWILIO_SID;
-  var authToken = token || TWILIO_TOKEN;
-  var fromNumber = from || TWILIO_FROM;
-  if (!accountSid || !authToken || !fromNumber || !to) {
-    throw new Error('Missing Twilio credentials');
-  }
-  var client = twilio(accountSid, authToken);
-  var message = await client.messages.create({ to: to, from: fromNumber, body: body });
-  return message.sid;
+async function sendSms(to, text, apiKey, apiSecret) {
+  var key = apiKey || VONAGE_API_KEY;
+  var secret = apiSecret || VONAGE_API_SECRET;
+  if (!key || !secret || !to) throw new Error('Missing Vonage credentials or recipient');
+
+  var toNum = to.toString().replace(/\s/g, '');
+  if (toNum.startsWith('0')) toNum = '61' + toNum.slice(1);
+  if (toNum.startsWith('+')) toNum = toNum.slice(1);
+
+  var body = JSON.stringify({
+    from: 'MeridianAI',
+    to: toNum,
+    text: text,
+    api_key: key,
+    api_secret: secret
+  });
+
+  return new Promise(function(resolve, reject) {
+    var options = {
+      hostname: 'rest.nexmo.com',
+      path: '/sms/json',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+
+    var req = https.request(options, function(res) {
+      var data = '';
+      res.on('data', function(chunk) { data += chunk; });
+      res.on('end', function() {
+        try {
+          var parsed = JSON.parse(data);
+          var msg = parsed.messages && parsed.messages[0];
+          if (msg && msg.status === '0') {
+            console.log('SMS sent via Vonage to ' + toNum);
+            resolve({ success: true, id: msg['message-id'] });
+          } else {
+            reject(new Error(msg ? msg['error-text'] : 'Unknown error'));
+          }
+        } catch(e) { reject(e); }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 function formatAU(num) {
@@ -38,13 +76,9 @@ function scoreLead(phone, email, intent, budget) {
   if (email) score += 10;
   if (intent) {
     var i = intent.toLowerCase();
-    if (i.indexOf('buy') > -1 || i.indexOf('purchase') > -1 || i.indexOf('buyer') > -1) {
-      score += 20;
-    } else if (i.indexOf('sell') > -1 || i.indexOf('list') > -1) {
-      score += 15;
-    } else {
-      score += 5;
-    }
+    if (i.indexOf('buy') > -1 || i.indexOf('purchase') > -1 || i.indexOf('buyer') > -1) score += 20;
+    else if (i.indexOf('sell') > -1 || i.indexOf('list') > -1) score += 15;
+    else score += 5;
   }
   if (budget) {
     var b = parseInt(budget.toString().replace(/[^0-9]/g, ''));
@@ -58,17 +92,13 @@ function scoreLead(phone, email, intent, budget) {
 
 app.post('/send-sms', async function(req, res) {
   var to = req.body.to;
-  var body = req.body.body;
-  var accountSid = req.body.accountSid;
-  var authToken = req.body.authToken;
-  var from = req.body.from;
-  if (!to || !body) {
-    return res.status(400).json({ error: 'Missing to or body' });
-  }
+  var text = req.body.body;
+  var apiKey = req.body.apiKey;
+  var apiSecret = req.body.apiSecret;
+  if (!to || !text) return res.status(400).json({ error: 'Missing to or body' });
   try {
-    var sid = await sendSms(to, body, accountSid, authToken, from);
-    console.log('SMS sent to ' + to);
-    res.json({ success: true, sid: sid });
+    var result = await sendSms(to, text, apiKey, apiSecret);
+    res.json({ success: true, id: result.id });
   } catch (err) {
     console.error('SMS error: ' + err.message);
     res.status(500).json({ error: err.message });
@@ -85,15 +115,14 @@ app.post('/facebook-lead', async function(req, res) {
   var intent = req.body.intent;
   var budget = req.body.budget;
   var ad_name = req.body.ad_name;
-  var accountSid = req.body.accountSid;
-  var authToken = req.body.authToken;
-  var from = req.body.from;
-  var agentPhone = req.body.agentPhone;
+  var apiKey = req.body.apiKey || VONAGE_API_KEY;
+  var apiSecret = req.body.apiSecret || VONAGE_API_SECRET;
+  var agentPhone = req.body.agentPhone || AGENT_PHONE;
 
   var fullName = name || ((first_name || '') + ' ' + (last_name || '')).trim() || 'New Lead';
   var firstName = first_name || fullName.split(' ')[0];
   var leadPhone = formatAU(phone);
-  var agentNum = formatAU(agentPhone || AGENT_PHONE);
+  var agentNum = formatAU(agentPhone);
   var score = scoreLead(phone, email, intent, budget);
   var isHot = score >= 80;
 
@@ -107,11 +136,8 @@ app.post('/facebook-lead', async function(req, res) {
       (ad_name ? 'Ad: ' + ad_name + '\n' : '') +
       'Score: ' + score + '/100 - ' + (isHot ? 'Call ASAP!' : 'Nurture started');
     try {
-      await sendSms(agentNum, agentMsg, accountSid, authToken, from);
-      console.log('Agent SMS sent to ' + agentNum);
-    } catch (e) {
-      console.error('Agent SMS error: ' + e.message);
-    }
+      await sendSms(agentNum, agentMsg, apiKey, apiSecret);
+    } catch (e) { console.error('Agent SMS error: ' + e.message); }
   }
 
   if (leadPhone) {
@@ -119,40 +145,20 @@ app.post('/facebook-lead', async function(req, res) {
       'I am Aria, your AI property assistant - available 24/7. ' +
       'I will be in touch shortly to help you ' + (intent || 'find your perfect property') + '. - Meridian AI';
     try {
-      await sendSms(leadPhone, leadMsg, accountSid, authToken, from);
-      console.log('Lead SMS sent to ' + leadPhone);
-    } catch (e) {
-      console.error('Lead SMS error: ' + e.message);
-    }
+      await sendSms(leadPhone, leadMsg, apiKey, apiSecret);
+    } catch (e) { console.error('Lead SMS error: ' + e.message); }
   }
 
   res.json({ success: true, lead: { name: fullName, phone: leadPhone, email: email, score: score, isHot: isHot } });
 });
 
-app.post('/inbound-sms', async function(req, res) {
-  var from = req.body.From;
-  var body = req.body.Body;
-  console.log('Inbound SMS from ' + from);
-  var agentNum = formatAU(AGENT_PHONE);
-  if (agentNum) {
-    var fwd = 'LEAD REPLIED - Meridian AI\nFrom: ' + from + '\nMessage: ' + body;
-    try {
-      await sendSms(agentNum, fwd, TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM);
-    } catch (e) {
-      console.error('Forward error: ' + e.message);
-    }
-  }
-  res.set('Content-Type', 'text/xml');
-  res.send('<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks! Our team will be in touch shortly. - Meridian AI</Message></Response>');
-});
-
 app.get('/', function(req, res) {
   res.json({
-    status: 'Meridian Backend running',
+    status: 'Meridian Backend running - Vonage SMS',
     endpoints: {
-      'POST /send-sms': 'Send SMS from dashboard',
+      'POST /send-sms': 'Send SMS via Vonage',
       'POST /facebook-lead': 'Facebook Lead Ads via Make',
-      'POST /inbound-sms': 'Twilio inbound SMS webhook'
+      'POST /inbound-sms': 'Inbound SMS webhook'
     }
   });
 });
