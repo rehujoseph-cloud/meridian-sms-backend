@@ -29,7 +29,7 @@ app.post('/facebook-lead', async function(req, res) {
   try {
     var client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
     var agentPhone = process.env.AGENT_PHONE;
-    var msg = 'NEW LEAD - Meridian AI\nName: ' + (req.body.name || 'Unknown') + '\nPhone: ' + (req.body.phone || 'N/A') + '\nEmail: ' + (req.body.email || 'N/A') + '\nIntent: ' + (req.body.intent || 'N/A');
+    var msg = 'NEW LEAD - Meridian AI\nName: ' + (req.body.name || 'Unknown') + '\nPhone: ' + (req.body.phone || 'N/A') + '\nEmail: ' + (req.body.email || 'N/A') + '\nBudget: ' + (req.body.budget || 'N/A') + '\nIntent: ' + (req.body.intent || 'N/A');
     await client.messages.create({ to: agentPhone, from: process.env.TWILIO_FROM, body: msg });
     console.log('Agent SMS sent');
     res.json({ success: true });
