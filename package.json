@@ -1,14 +1,18 @@
 {
   "name": "meridian-sms-backend",
   "version": "1.0.0",
-  "description": "Meridian AI — Twilio SMS backend",
+  "description": "Meridian AI Real Estate Agent Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "twilio": "^4.20.0"
+    "cors": "^2.8.5",
+    "twilio": "^4.19.0",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
