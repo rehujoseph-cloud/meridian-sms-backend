@@ -180,7 +180,7 @@ app.get('/api/leads/recent', async function(req, res) {
 // Get all leads endpoint (for dashboard)
 app.get('/api/leads', async function(req, res) {
   try {
-    var result = await pool.query('SELECT * FROM leads ORDER BY created_at DESC');
+    var result = await pool.query('SELECT id, name, email, phone, budget, intent, source, COALESCE(score, 50) as score, created_at FROM leads ORDER BY created_at DESC');
     res.json({ leads: result.rows });
   } catch(e) {
     console.error('Get leads error:', e.message);
