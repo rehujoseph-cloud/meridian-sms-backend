@@ -16,6 +16,7 @@ const pool = new Pool({
 // Initialize database table
 async function initDatabase() {
   try {
+    // Create table if not exists
     await pool.query(`
       CREATE TABLE IF NOT EXISTS leads (
         id SERIAL PRIMARY KEY,
@@ -25,11 +26,16 @@ async function initDatabase() {
         budget VARCHAR(100),
         intent TEXT,
         source VARCHAR(50),
-        score INTEGER DEFAULT 50,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('✅ Database initialized');
+    console.log('✅ Database table checked');
+    
+    // Add score column if it doesn't exist (for existing tables)
+    await pool.query(`
+      ALTER TABLE leads ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 50
+    `);
+    console.log('✅ Score column added/verified');
   } catch(e) {
     console.error('❌ Database init error:', e.message);
   }
